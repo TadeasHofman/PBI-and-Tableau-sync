@@ -28,14 +28,11 @@ def add_network_column_and_filter(pbi_raw_path, tableau_raw_path, pbi_prev_month
     pbi_prev_month_df = pd.read_excel(pbi_prev_month_path)
     print("PBI Previous Month Columns:", pbi_prev_month_df.columns.tolist())  # Debugging: print column names
     
-    # Filter out rows where the 'Network' column has the value 'AFS Shuttle' in Tableau raw
-    tableau_df_filtered = tableau_df[tableau_df['Network'] != 'AFS Shuttle']
-    
-    # Merge the PBI raw DataFrame with the filtered Tableau raw DataFrame
-    # based on matching 'TransportOrderId' in PBI raw with 'Transportorder Id (Transportorder)' in Tableau raw
+    # Merge the PBI raw DataFrame with the Tableau raw DataFrame
+    # Include all rows from PBI raw, including 'AFS Shuttle'
     merged_df = pd.merge(
         pbi_df,
-        tableau_df_filtered[['Transportorder Id (Transportorder)', 'Network']],
+        tableau_df[['Transportorder Id (Transportorder)', 'Network']],
         how='left',
         left_on='TransportOrderId',
         right_on='Transportorder Id (Transportorder)'
@@ -53,18 +50,32 @@ def add_network_column_and_filter(pbi_raw_path, tableau_raw_path, pbi_prev_month
         if 'Network_x' in merged_df.columns:
             merged_df.drop(columns=['Network_x'], inplace=True)
     
-    # Filter out rows with 'Network' equal to 'AFS Shuttle' again in the merged DataFrame
-    merged_df_filtered = merged_df[merged_df['Network'] != 'AFS Shuttle']
-
-    # Remove duplicate rows based on all columns
-    merged_df_filtered.drop_duplicates(inplace=True)
+    # Save all networks including 'AFS Shuttle' into the updated PBI raw sheet
+    merged_df_filtered = merged_df  # Save this as is for PBI raw updated
     
-    # Save both the filtered Tableau DataFrame, the merged DataFrame, and the PBI previous month into different sheets of the same Excel file
+    # Now filter out 'AFS Shuttle' for further analysis and the Tableau raw file
+    tableau_df_filtered = tableau_df[tableau_df['Network'] != 'AFS Shuttle']
+    pbi_df_filtered = merged_df_filtered[merged_df_filtered['Network'] != 'AFS Shuttle']
+
+    # Identify transport orders missing in Tableau but present in PBI (Original PBI raw with Filtered Tableau raw)
+    missing_in_tableau = pbi_df_filtered[~pbi_df_filtered['TransportOrderId'].isin(tableau_df_filtered['Transportorder Id (Transportorder)'])]
+    
+    # Identify transport orders missing in PBI but present in Tableau (Filtered Tableau raw with Original PBI raw)
+    missing_in_pbi = tableau_df_filtered[~tableau_df_filtered['Transportorder Id (Transportorder)'].isin(pbi_df_filtered['TransportOrderId'])]
+    
+    # Identify duplicate transport orders in PBI raw and PBI previous month
+    duplicates_pbi = pd.concat([pbi_df, pbi_prev_month_df]).duplicated(subset=['TransportOrderId'], keep=False)
+    duplicates_pbi_df = pd.concat([pbi_df, pbi_prev_month_df])[duplicates_pbi]
+
+    # Save all DataFrames into different sheets of the same Excel file
     try:
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             merged_df_filtered.to_excel(writer, index=False, sheet_name='PBI_Raw_Updated')
             tableau_df_filtered.to_excel(writer, index=False, sheet_name='Tableau_Raw_Filtered')
             pbi_prev_month_df.to_excel(writer, index=False, sheet_name='PBI_Previous_Month')
+            missing_in_tableau.to_excel(writer, index=False, sheet_name='Missing_In_Tableau')
+            missing_in_pbi.to_excel(writer, index=False, sheet_name='Missing_In_PBI')
+            duplicates_pbi_df.to_excel(writer, index=False, sheet_name='Duplicates_In_PBI')
         print(f"Updated file saved as {output_path}")
     except PermissionError:
         print(f"Permission denied: Unable to save the file. Please close '{output_path}' if it is open in another program or choose a different output path.")
@@ -77,7 +88,8 @@ def upload_files(pathEntry1, pathEntry2, pathEntry3):
     
     if pbi_raw_path and tableau_raw_path and pbi_prev_month_path:  # Check if all file paths are not empty
         # Set the output path for the new Excel file
-        output_path = os.path.splitext(pbi_raw_path)[0] + "_updated.xlsx"
+        output_directory = os.path.dirname(pbi_raw_path)  # Get the directory of the input file
+        output_path = os.path.join(output_directory, "Tableau_PBI_sync.xlsx")  # Set the desired output file name
         add_network_column_and_filter(pbi_raw_path, tableau_raw_path, pbi_prev_month_path, output_path)
     else:
         print("Please select the PBI raw, Tableau raw, and PBI previous month files.")
@@ -86,7 +98,7 @@ def app():
     customtkinter.set_appearance_mode("System")
     
     app = customtkinter.CTk()
-    app.title("Tariff extractor")
+    app.title("Tableau_PBI_Synchronizer")
 
     frame = customtkinter.CTkFrame(app)
     frame.grid(row=0, column=0, sticky="ew", padx=20, pady=20)
@@ -100,7 +112,8 @@ def app():
     browseButton1 = customtkinter.CTkButton(
         frame,
         text="Browse files",
-        command=lambda: selectExcelFile(pathEntry1)
+        command=lambda: selectExcelFile(pathEntry1),
+        fg_color="#EE7203"
     )
     browseButton1.grid(row=0, column=2, pady=10, padx=5)
 
@@ -113,7 +126,8 @@ def app():
     browseButton2 = customtkinter.CTkButton(
         frame,
         text="Browse files",
-        command=lambda: selectExcelFile(pathEntry2)
+        command=lambda: selectExcelFile(pathEntry2),
+        fg_color="#EE7203"
     )
     browseButton2.grid(row=1, column=2, pady=10, padx=5)
 
@@ -126,14 +140,16 @@ def app():
     browseButton3 = customtkinter.CTkButton(
         frame,
         text="Browse files",
-        command=lambda: selectExcelFile(pathEntry3)
+        command=lambda: selectExcelFile(pathEntry3),
+        fg_color="#EE7203"
     )
     browseButton3.grid(row=2, column=2, pady=10, padx=5)
 
     uploadButton = customtkinter.CTkButton(
         frame,
         text="Upload",
-        command=lambda: upload_files(pathEntry1, pathEntry2, pathEntry3)
+        command=lambda: upload_files(pathEntry1, pathEntry2, pathEntry3),
+        fg_color="#EE7203"
     )
     uploadButton.grid(row=3, column=1, pady=10, padx=5)
 
